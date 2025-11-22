@@ -1,24 +1,12 @@
-import math
 from typing import Dict, List
 
 import numpy as np
 import torch
-from src.logger import ExperimentLogger
+from src.utils.event_logging import ExperimentLogger
+from src.utils.histogram import quantize_histogram
 from src.neuron_metadata import NeuronMetadata
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-
-def quantize_histogram(t, bins=16):
-    if torch.isnan(t).any():
-        # Clean before histogramming
-        t = torch.nan_to_num(t, nan=0.0)
-    tmin = float(t.min())
-    tmax = float(t.max())
-    if not math.isfinite(tmin) or not math.isfinite(tmax) or tmin == tmax:
-        # fallback to uniform histogram
-        return [0] * bins
-    hist = torch.histc(t, bins=bins, min=tmin, max=tmax)
-    return hist.cpu().tolist()
 
 
 class NeuronApoptosisManager:

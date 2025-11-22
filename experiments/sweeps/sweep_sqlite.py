@@ -1,11 +1,18 @@
 import itertools
 import json
 import os
-import sqlite3
 import subprocess
 import time
-from datetime import datetime
+from pathlib import Path
 from multiprocessing import Pool
+
+# Import database layer
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from src.db.connection import init_db as db_init, open_db
+from src.db.insert_run import insert_experiment_row, finalize_experiment_row
+from src.db.insert_metrics import insert_metrics
+from src.db.insert_events import insert_events
 
 DB_PATH = "experiments.db"
 TRAIN_PY = "train.py"
@@ -15,13 +22,8 @@ TRAIN_PY = "train.py"
 # ============================================================== #
 
 def init_db():
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-
-    # create tables (idempotent)
-    cur.executescript(open("schema.sql").read())
-    con.commit()
-    con.close()
+    """Initialize database with schema."""
+    db_init(DB_PATH)
 
 
 def insert_experiment(params):

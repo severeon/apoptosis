@@ -14,20 +14,23 @@ import argparse
 import json
 import os
 import random
-import shutil
-import sqlite3
 import subprocess
 import sys
-import threading
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
 from math import exp
+from pathlib import Path
+
+# Import database layer
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from src.db.connection import init_db, open_db
+from src.db.insert_run import insert_experiment_row, set_status_running, finalize_experiment_row, get_top_experiments
+from src.db.insert_metrics import insert_metrics
+from src.db.insert_events import insert_events
 
 # -----------------------
-# Path to your train.py (file you uploaded)
-# Developer instruction: use this path.
+# Path to train.py (relative to project root)
 TRAIN_PY = "train.py"
 
 # Default DB path
@@ -54,153 +57,7 @@ SPACE = {
     "num_steps": [200, 300, 500],
 }
 
-# -----------------------
-# DB schema
-# -----------------------
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS experiments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT UNIQUE,
-    timestamp TEXT,
-    run_name TEXT,
-    params TEXT,               -- JSON
-    status TEXT,               -- pending | running | done | failed
-    start_time REAL,
-    end_time REAL,
-    duration REAL,
-    final_loss REAL,
-    total_apoptosis_events INTEGER,
-    total_senescence_events INTEGER,
-    stdout TEXT,
-    stderr TEXT
-);
-
-CREATE TABLE IF NOT EXISTS metrics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    experiment_id INTEGER,
-    step INTEGER,
-    layer TEXT,
-    mean REAL,
-    p05 REAL,
-    p50 REAL,
-    p95 REAL,
-    var REAL,
-    hist_json TEXT,
-    FOREIGN KEY(experiment_id) REFERENCES experiments(id)
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    experiment_id INTEGER,
-    event_type TEXT,
-    layer TEXT,
-    neuron_index INTEGER,
-    step INTEGER,
-    FOREIGN KEY(experiment_id) REFERENCES experiments(id)
-);
-"""
-
-# -----------------------
-# Helpers
-# -----------------------
-
-def open_db(db_path):
-    con = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
-    con.row_factory = sqlite3.Row
-    return con
-
-def init_db(db_path):
-    con = open_db(db_path)
-    cur = con.cursor()
-    cur.executescript(SCHEMA)
-    con.commit()
-    return con
-
-def insert_experiment_row(con, params, run_name=None):
-    cur = con.cursor()
-    uid = str(uuid.uuid4())
-    ts = datetime.utcnow().isoformat()
-    params_json = json.dumps(params)
-    run_name = run_name or f"auto_{uid[:8]}"
-    cur.execute("""
-        INSERT INTO experiments (uuid, timestamp, run_name, params, status)
-        VALUES (?, ?, ?, ?, ?)
-    """, (uid, ts, run_name, params_json, "pending"))
-    con.commit()
-    return cur.lastrowid
-
-def set_status_running(con, exp_id):
-    cur = con.cursor()
-    cur.execute("UPDATE experiments SET status=?, start_time=? WHERE id=?",
-                ("running", time.time(), exp_id))
-    con.commit()
-
-def finalize_experiment_row(con, exp_id, summary, stdout, stderr, rc=0):
-    cur = con.cursor()
-    end_time = time.time()
-    duration = None
-    if summary and summary.get("duration"):
-        duration = summary.get("duration")
-    else:
-        # fallback
-        cur.execute("SELECT start_time FROM experiments WHERE id=?", (exp_id,))
-        row = cur.fetchone()
-        if row and row["start_time"]:
-            duration = end_time - row["start_time"]
-    cur.execute("""
-        UPDATE experiments
-        SET status=?, end_time=?, duration=?, final_loss=?, total_apoptosis_events=?,
-            total_senescence_events=?, stdout=?, stderr=?
-        WHERE id=?
-    """, (
-        "done" if rc == 0 else "failed",
-        end_time,
-        duration,
-        summary.get("final_loss") if summary else None,
-        summary.get("total_apoptosis_events") if summary else None,
-        summary.get("total_senescence_events") if summary else None,
-        stdout,
-        stderr,
-        exp_id
-    ))
-    con.commit()
-
-def insert_metrics(con, exp_id, metrics):
-    cur = con.cursor()
-    if not metrics:
-        return
-    rows = []
-    for m in metrics:
-        # metrics expected to be list of dicts with layer and stats
-        # we accept both single-layer-per-step entries and flattened arrays
-        layer = m.get("layer")
-        rows.append((
-            exp_id,
-            m.get("step"),
-            layer,
-            m.get("mean"),
-            m.get("p05"),
-            m.get("p50"),
-            m.get("p95"),
-            m.get("var"),
-            json.dumps(m.get("hist")),
-        ))
-    cur.executemany("""
-        INSERT INTO metrics (experiment_id, step, layer, mean, p05, p50, p95, var, hist_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, rows)
-    con.commit()
-
-def insert_events(con, exp_id, events):
-    if not events:
-        return
-    cur = con.cursor()
-    rows = [(exp_id, e.get("event_type"), e.get("layer"), e.get("neuron_index"), e.get("step")) for e in events]
-    cur.executemany("""
-        INSERT INTO events (experiment_id, event_type, layer, neuron_index, step)
-        VALUES (?, ?, ?, ?, ?)
-    """, rows)
-    con.commit()
+# Database functions are now imported from src.db
 
 # -----------------------
 # Simple scoring function (lower is better)
