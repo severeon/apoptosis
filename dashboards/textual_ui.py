@@ -126,12 +126,12 @@ def rich_loop():
 # Textual app fallback - simple
 if USE_TEXTUAL:
     class SimpleWidget(Static):
-        def __init__(self, refresh=REFRESH):
+        def __init__(self, refresh_interval=REFRESH):
             super().__init__()
-            self.refresh = refresh
+            self.refresh_interval = refresh_interval
 
         def on_mount(self):
-            self.set_interval(self.refresh, self.refresh_view)
+            self.set_interval(self.refresh_interval, self.refresh_view)
 
         async def refresh_view(self):
             content = ""
